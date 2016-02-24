@@ -1,0 +1,130 @@
+---
+title: "Moran Contiguity Plots"
+author: "Marc Weber"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document:
+    theme: cosmo
+    highlighted: default 
+---
+
+This combines the R code provided by Tetra Tech in their R_SampleScript.docx document with a couple extra preprocessing steps so that a user can grab all necessary input data directly from the web and run the R code.
+
+Download and extract to an NHDPlus directory the NHDPlus catchments and NHDPlus flowlines for Hydro-region 5:
+ftp://ec2-54-227-241-43.compute-1.amazonaws.com/NHDplus/NHDPlusV21/Data/NHDPlusMS/NHDPlus05/NHDPlusV21_MS_05_NHDSnapshot_06.7z
+ftp://ec2-54-227-241-43.compute-1.amazonaws.com/NHDplus/NHDPlusV21/Data/NHDPlusMS/NHDPlus05/NHDPlusV21_MS_05_NHDPlusCatchment_01.7z
+
+Download StreamCat Hydro-region 5 NLCD file from here:
+ftp://newftp.epa.gov/EPADataCommons/ORD/NHDPlusLandscapeAttributes/StreamCat/HydroRegions/NLCD2011_Region05.csv
+
+```{r}
+library(rgdal)
+library(scales)    ### (Wickham 2015)
+library(spdep)
+
+# Navigate to where you downloaded the NHDPlus catchments and NHDPlus snapshot for hydro-region 5:
+MS_05=readOGR('C:/Users/mbeck/Desktop/NHDPlusMS/NHDPlus05/NHDPlusCatchment','Catchment')
+names(MS_05)  ## rename FEATUREID COMID to match StreamCat data
+
+names(MS_05)[2]="COMID"
+
+# Now we join the NHDPlus REACHCODE, which we'll then use to truncate to 4 digits and subset data to KY_Licking basin
+library(foreign) 
+MS_05_flowlines = read.dbf('C:/Users/mbeck/Desktop/NHDPlusMS/NHDPlus05/NHDSnapshot/Hydrography/NHDFlowline.dbf')
+head(MS_05_flowlines)
+MS_05$REACHCODE = MS_05_flowlines$REACHCODE[match(MS_05$COMID, MS_05_flowlines$COMID)]
+head(MS_05@data)
+# subset
+MS_05$BASIN = substr(MS_05$REACHCODE, 1,4)
+MS_0510 = MS_05[MS_05$BASIN=='0510' & ! is.na(MS_05$BASIN),] # don't need to worry about NA's, I verified
+
+dim(MS_0510)
+plot(MS_0510, axes=T) # skip if needed, farily big file to plot
+load(file = 'rdata/NLCD2011_Region05.RData')
+NLCD2011=NLCD2011_Region05
+
+###merge variable of interest
+MS_0510Decid=merge(MS_0510,NLCD2011[,c(1,13)]); dim(MS_0510Decid)
+names(MS_0510Decid)
+TotalArea=sum(MS_0510Decid$AreaSqKM);TotalArea 
+MaxArea=max(MS_0510Decid$AreaSqKM); MaxArea    
+MinArea=min(MS_0510Decid$AreaSqKM); MinArea  
+
+MS_0510.nb=poly2nb(MS_0510,row.names=MS_0510$COMID,queen=TRUE)
+print(MS_0510.nb)  
+
+listw_0510=nb2listw(MS_0510.nb,style="W")
+
+moran.plot(MS_0510Decid$PctDecid2011Cat,listw_0510,labels=FALSE,xlab="Percent deciduous forest NLCD 2011",ylab="Spatially lagged percent deciduous forest NLCD 2011")
+moran.i=moran.test(MS_0510Decid$PctDecid2011Cat,listw_0510);moran.i
+
+legend("bottomright",legend=c(paste("Moran's I statistic =",round(moran.i[[3]][1],3)),paste("p-value=",moran.i[[2]])),bty="n")
+
+moran.plot.dot=function (x, listw, zero.policy = NULL, spChk = NULL, labels = NULL, 
+    xlab = NULL, ylab = NULL, quiet = NULL, ...) 
+  
+{ 
+    if (!inherits(listw, "listw")) 
+        stop(paste(deparse(substitute(listw)), "is not a listw object"))
+    if (is.null(quiet)) 
+        quiet <- !get("verbose", envir = .spdepOptions)
+    stopifnot(is.vector(x))
+    stopifnot(is.logical(quiet))
+    if (is.null(zero.policy)) 
+        zero.policy <- get("zeroPolicy", envir = .spdepOptions)
+    stopifnot(is.logical(zero.policy))
+    xname <- deparse(substitute(x))
+    if (!is.numeric(x)) 
+        stop(paste(xname, "is not a numeric vector"))
+    if (any(is.na(x))) 
+        stop("NA in X")
+    n <- length(listw$neighbours)
+    if (n != length(x)) 
+        stop("objects of different length")
+    if (is.null(spChk)) 
+        spChk <- get.spChkOption()
+    if (spChk && !chkIDs(x, listw)) 
+        stop("Check of data and weights ID integrity failed")
+    labs <- TRUE
+    if (is.logical(labels) && !labels) 
+        labs <- FALSE
+    if (is.null(labels) || length(labels) != n) 
+        labels <- as.character(attr(listw, "region.id"))
+    wx <- lag.listw(listw, x, zero.policy = zero.policy)
+    if (is.null(xlab)) 
+        xlab <- xname
+    if (is.null(ylab)) 
+        ylab <- paste("spatially lagged", xname)
+    plot(x, wx, pch=19, col= alpha("black",0.4),cex=2.1+(log10(MS_0510Decid$AreaSqKM/MaxArea)), xlab = xlab, ylab = ylab, ...)
+    if (zero.policy) {
+        n0 <- wx == 0
+        if (any(n0)) {
+            symbols(x[n0], wx[n0], inches = FALSE, circles = rep(diff(range(x))/50, 
+                length(which(n0))), bg = "grey", add = TRUE)
+        }
+    }
+    xwx.lm <- lm(wx ~ x)
+    abline(xwx.lm,col="red",lwd=2)
+    abline(h = mean(wx), lty = 2)
+    abline(v = mean(x), lty = 2)
+    infl.xwx <- influence.measures(xwx.lm)
+    is.inf <- which(apply(infl.xwx$is.inf, 1, any))
+    points(x[is.inf], wx[is.inf], pch = 1, cex=1,col="blue")
+    if (labs) 
+        text(x[is.inf], wx[is.inf], labels = labels[is.inf], 
+            pos = 2, cex = 0.7)
+    rownames(infl.xwx$infmat) <- labels
+    if (!quiet) 
+        summary(infl.xwx)
+    invisible(infl.xwx)
+}
+
+environment(moran.plot.dot)<-environment(moran.plot)
+
+moran.plot.dot(MS_0510Decid$PctDecid2011Cat,listw_0510,labels=FALSE,xlab="Percent deciduous forest NLCD 2011", ylab="Spatially lagged percent deciduous forest NLCD 2011")
+moran.i=moran.test(MS_0510Decid$PctDecid2011Cat,listw_0510,randomisation=FALSE)
+legend("bottomright",legend=c(paste("Moran's I statistic =",round(moran.i[[3]][1],3)),paste("p-value=",moran.i[[2]])),bty="n")
+
+```
+
+
