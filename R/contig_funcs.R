@@ -6,7 +6,7 @@ contig_plo <- function(ctch_in, flow_in, nlcd_in, subbasin = '0510', lu = 'PctUr
   library(foreign)
   
   # import catchment, rename FEATUREID
-  ctch <- readOGR(dirname(ctch_in), gsub('\\.shp', '', basename(ctch_in)))
+  ctch <- readOGR(dirname(ctch_in), gsub('\\.shp', '', basename(ctch_in)), verbose = FALSE)
   names(ctch)[names(ctch) %in% 'FEATUREID'] <- 'COMID'
   
   # import flow lines, join with catchment
@@ -98,6 +98,3 @@ moran.plot.dot <- function (x, listw, lu, zero.policy = NULL, spChk = NULL, labe
 }
 
 environment(moran.plot.dot) <- environment(moran.plot)
-
-contig_plo(ctch_in, flow_in, nlcd_in, subbasin = '0510', lu = 'PctUrbOp2011ws')
-
