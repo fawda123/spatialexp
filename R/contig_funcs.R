@@ -38,7 +38,7 @@ contig_plo <- function(ctch_in, flow_in, nlcd_in, subbasin = '0510', lu = 'PctUr
   
 }
 
-moran.plot.dot <- function (x, listw, lu, zero.policy = NULL, spChk = NULL, labels = NULL, 
+moran.plot.dot <- function (x, listw, lu, zero.policy = NULL, spChk = NULL, labels = FALSE, 
     xlab = NULL, ylab = NULL, quiet = NULL, ...){ 
 
     if (!inherits(listw, "listw")) 
