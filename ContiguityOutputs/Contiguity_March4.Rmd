@@ -1,0 +1,239 @@
+---
+title: "Contiguity"
+author: "Tetra Tech"
+date: "Friday, March 04, 2016"
+output: html_document
+---
+
+###Introduction
+The R script contained in this document makes Moran scatterplots of StreamCat (Hill et al. 2015) variables linked to NHDPlus V2 catchments (USEPA and USGS 2012) using the moran.plot function of the spdep package (Bivand et al. 2013, Bivand and Piras 2015) in R. The Ohio (05) vector processing unit of the Mississippi drainage area is used for demonstration purposes. The script imports the data, attaches relevant variables, divides the dataset into HUC4 subregions, calculates neighbors and relative weights, and creates moran scatterplots for contiguous catchments to the index catchments.The plot function is slightly modified from the spdep original to code points for relative watershed size. Final products for each subregion include a text file neighborhood summary and 3 scatterplot figures in .png format. The fourth scatterplot, road density, is included in the code but currently not being run, while issues of "NA's" are being addressed.
+
+###Methods
+The first step is to load required libararies and set the working directory. If you are installing these packages for the first time, make sure to check the "install dependencies" box. Set the working directory to the location of your files.Next, the script loads and merges datasets on "COMID."
+
+```{r warning=FALSE,message=FALSE}
+##load libararies, set working directory
+library(maptools)
+library(scales)  ###for graphical parameters
+library(spdep)  ###spatial dedendency functions
+library(foreign) 	### reads in .dbf files (could otherwise convert to .csv in excel)
+
+search()
+# setwd("C:/Users/Diane.Allen@tetratech.com/Documents/ORD_ESDAworking")
+
+### Read in polygon file.
+MS_05=readShapeSpatial("Catchments05.shp")
+names(MS_05)  
+names(MS_05)[2]="COMID"  ## rename FEATUREID COMID to match StreamCat data and FlowlinePlusVAA table
+names(MS_05); dim(MS_05)  ##  170145 4
+
+### Read in flowline attributes and merge to catchments needed to divide into subregions and for hydrologic connectivity.
+FlowlinePlusVAA=read.dbf("FlowlinePlusVAA.dbf"); dim(FlowlinePlusVAA)  	###172400  38
+names(FlowlinePlusVAA)	###change ComID, R case sensitive!
+names(FlowlinePlusVAA)[1]="COMID" 
+
+MS_05Flow=merge(MS_05,FlowlinePlusVAA[,c(1,4:7,26:27)]); dim(MS_05Flow)	###170145  10
+sinks=MS_05Flow[MS_05Flow$COMID<0,]; length(sinks)	### 115 sinks, will not be sorted to subregions
+
+### Read in data files from StreamCat.
+
+##Percent deciduous forest
+NLCD2011=read.csv("NLCD2011_Region05.csv")
+names(NLCD2011)	##field of interest 13
+
+##2010 population density and housing unit density
+PopDens=read.csv("USCensus2010_Region05.csv")
+names(PopDens)	##fields of interest 6 and 7
+ 
+##Road density
+RoadDens=read.csv("RoadDensity_Region05.csv")
+names(RoadDens)  ## field of interest 6
+
+### Merge variables of interest.
+MS_05Plus1=merge(MS_05Flow,NLCD2011[,c(1,13)])
+MS_05Plus2=merge(MS_05Plus1,PopDens[,c(1,6,7)])
+MS_05Plus=merge(MS_05Plus2,RoadDens[,c(1,6)]); dim(MS_05Plus) ###170145  14
+names(MS_05Plus)
+```
+Here, the script adds subregion field for use in loop and count subregions (NA's in "Reachcode" represent sinks). I also made an integer subregion field for the "for loop." The density variables are then log(x+1) transformed.
+```{r warning=FALSE,message=FALSE}
+MS_05Plus$subregion<-substr(as.character(MS_05Plus$ReachCode),1,4) 
+subregions=unique(na.omit(MS_05Plus$subregion))
+MS_05Plus$subregion.number=as.numeric(MS_05Plus$subregion)
+length(unique(na.omit(subregions)))### 14
+summary(MS_05Plus$subregion.number)
+
+### Log(x+1)-transform density variables (housing and populations density have zeroes)
+MS_05Plus$LogHUDen2010<-log10(MS_05Plus$HUDen2010Cat+1)
+MS_05Plus$LogPopDen2010<-log10(MS_05Plus$PopDen2010Cat+1)
+MS_05Plus$LogRdDens<-log10(MS_05Plus$RdDensCat+1)
+```
+
+This section of the script manually removes sinks (we wanted to know how many affected catchments there were) and runs a "For loop" which: 
+1) divides dataset into subregions (this process also drops sinks, which do not have reachcodes), 2) defines the modified moran scatterplot function, 3) calculates the necessary moran inputs: the neighbors list (nb.file.i) and spatial weights matrix (listw_05), and 4) generates txt file output of the neighbors summary and png figures of scatterplots. Replace path names in red print before running.
+
+```{r warning=FALSE,message=FALSE,fig.width=7,fig.height=7}
+n=length(unique(na.omit(subregions)))### 14
+
+###Manually removing sinks here. Could be automated. Wanted to know how many were being left out.
+sinks=which(is.na(MS_05Plus$subregion.number)); sinks
+
+MS_05PlusNoSinks=MS_05Plus[1:170030,]; dim(MS_05PlusNoSinks) ###170030  16
+names(MS_05PlusNoSinks)
+
+
+for (i in 1:n) {
+
+index=500+i
+
+MS_05Plus.i=MS_05PlusNoSinks[MS_05PlusNoSinks$subregion.number==index,]
+name.i=paste("MS_05.",i,sep="")
+ 
+### Modified Moran plot (smaller, scaled symbols; red line; removed influencing point markers)
+### This uses the vast majority of the original code, and other spdep functions, so environment points 
+### there at the end
+
+moran.plot.dot=function (x, listw, zero.policy = NULL, spChk = NULL, labels = NULL, 
+    xlab = NULL, ylab = NULL, quiet = NULL, ...) 
+{ 
+    if (!inherits(listw, "listw")) 
+        stop(paste(deparse(substitute(listw)), "is not a listw object"))
+    if (is.null(quiet)) 
+        quiet <- !get("verbose", envir = .spdepOptions)
+    stopifnot(is.vector(x))
+    stopifnot(is.logical(quiet))
+    if (is.null(zero.policy)) 
+        zero.policy <- get("zeroPolicy", envir = .spdepOptions)
+    stopifnot(is.logical(zero.policy))
+    xname <- deparse(substitute(x))
+    if (!is.numeric(x)) 
+        stop(paste(xname, "is not a numeric vector"))
+    if (any(is.na(x))) 
+        stop("NA in X")
+    n <- length(listw$neighbours)
+    if (n != length(x)) 
+        stop("objects of different length")
+    if (is.null(spChk)) 
+        spChk <- get.spChkOption()
+    if (spChk && !chkIDs(x, listw)) 
+        stop("Check of data and weights ID integrity failed")
+    labs <- TRUE
+    if (is.logical(labels) && !labels) 
+        labs <- FALSE
+    if (is.null(labels) || length(labels) != n) 
+        labels <- as.character(attr(listw, "region.id"))
+    wx <- lag.listw(listw, x, zero.policy = zero.policy)
+    if (is.null(xlab)) 
+        xlab <- xname
+    if (is.null(ylab)) 
+        ylab <- paste("spatially lagged", xname)
+    plot(x, wx, pch=19, col= alpha("dark blue",0.4),cex=5*(MS_05Plus.i$AreaSqKM/MaxArea), xlab = xlab, ylab = ylab, ...)
+    if (zero.policy) {
+        n0 <- wx == 0
+        if (any(n0)) {
+            symbols(x[n0], wx[n0], inches = FALSE, circles = rep(diff(range(x))/50, 
+                length(which(n0))), bg = "grey", add = TRUE)
+        }
+    }
+    xwx.lm <- lm(wx ~ x)
+    abline(xwx.lm,col="red",lwd=2)
+    abline(h = mean(wx), lty = 2)
+    abline(v = mean(x), lty = 2)
+    #infl.xwx <- influence.measures(xwx.lm)
+    #is.inf <- which(apply(infl.xwx$is.inf, 1, any))
+    #points(x[is.inf], wx[is.inf], pch = 1, cex=1,col="blue")
+    #if (labs) 
+    #    text(x[is.inf], wx[is.inf], labels = labels[is.inf], 
+    #        pos = 2, cex = 0.7)
+    #rownames(infl.xwx$infmat) <- labels
+    #if (!quiet) 
+    #   summary(infl.xwx)
+    #invisible(infl.xwx)
+}
+
+environment(moran.plot.dot)<-environment(moran.plot)
+
+	TotalArea=sum(MS_05Plus.i$AreaSqKM);TotalArea  
+	MaxArea=max(MS_05Plus.i$AreaSqKM); MaxArea     
+	MinArea=min(MS_05Plus.i$AreaSqKM); MinArea	 
+
+	###make continguity file, here accepting diagonals
+	nb.file.i=poly2nb(MS_05Plus.i,row.names=MS_05Plus.i$COMID,queen=TRUE)
+	nb.summary.i <- file.path("C:","Users","Diane.Allen@tetratech.com","Documents","ORD_ESDAworking",paste("HUC4 - 0", index,".txt", sep = ""))
+	#print(paste("HUC4 - 0", index, sep = ""))
+	capture.output(summary(nb.file.i),file=nb.summary.i)
+	graph.title<-paste("HUC4 - 0",index, sep = "")
+
+	###making weight list, row standardized, and write to csv file
+	listw_05=nb2listw(nb.file.i,style="W")
+#	weights.list.name=paste("MS_",substr(as.character(MS_0510Plus.i$ReachCode),1,4),"_weights.csv",sep="")
+#	write.csv(listw_05[[3]],title=weights.list.name)
+
+
+######Calls to plot. All but road density working. It fails because there are NA's in the original StreamCat dataset which 
+######we are working on
+pngpath1.i <- file.path("C:","Users","Diane.Allen@tetratech.com","Documents","ORD_ESDAworking",paste("MS_05 Subregion", i, "Forest.png", sep = ""))
+pngpath2.i <- file.path("C:","Users","Diane.Allen@tetratech.com","Documents","ORD_ESDAworking",paste("MS_05 Subregion", i, "Housing.png", sep = ""))
+pngpath3.i <- file.path("C:","Users","Diane.Allen@tetratech.com","Documents","ORD_ESDAworking",paste("MS_05 Subregion", i, "Population.png", sep = ""))
+pngpath4.i <- file.path("C:","Users","Diane.Allen@tetratech.com","Documents","ORD_ESDAworking",paste("MS_05 Subregion", i, "Roads.png", sep = ""))
+
+png(file=pngpath1.i,width=1120,height=850) 
+moran.plot.dot(cex.lab=1.2,MS_05Plus.i$PctDecid2011Cat,listw_05,labels=FALSE,xlab="Percent deciduous forest NLCD 2011",
+               ylab="Spatially lagged percent deciduous forest NLCD 2011", main=graph.title)
+moran.1=moran.test(MS_05Plus.i$PctDecid2011Cat,listw_05,randomisation=FALSE)
+legend("bottomright",legend=c(paste("Moran's I statistic =",round(moran.1[[3]][1],3)),paste("p-value=",moran.1[[2]])),bty="n")
+dev.off()
+#dev.off()
+png(file=pngpath2.i,width=1120,height=850)
+moran.plot.dot(cex.lab=1.2,MS_05Plus.i$LogHUDen2010,listw_05,labels=FALSE,xlab="Housing density 2010",
+               ylab="Spatially lagged housing density 2010",main=graph.title)
+moran.2=moran.test(MS_05Plus.i$LogHUDen2010,listw_05,randomisation=FALSE)
+legend("bottomright",legend=c(paste("Moran's I statistic =",round(moran.2[[3]][1],3)),paste("p-value=",moran.2[[2]])),bty="n")
+dev.off()
+
+png(file=pngpath3.i,width=1120,height=850)
+moran.plot.dot(cex.lab=1.2,MS_05Plus.i$LogPopDen2010,listw_05,labels=FALSE,xlab="Population density 2010",
+               ylab="Spatially lagged population density 2010",main=graph.title)
+moran.3=moran.test(MS_05Plus.i$LogPopDen2010,listw_05,randomisation=FALSE)
+legend("bottomright",legend=c(paste("Moran's I statistic =",round(moran.3[[3]][1],3)),paste("p-value=",moran.3[[2]])),bty="n")
+dev.off()
+
+#png(file=pngpath4.i,width=1120,height=850)
+#moran.plot.dot(cex.lab=1.2,MS_05Plus.i$LogRdDens,listw_05,labels=FALSE,xlab="Road density",
+#               ylab="Spatially lagged road density",main=graph.title)
+#moran.4=moran.test(MS_05Plus.i$LogRdDens,listw_05,randomisation=FALSE)
+#legend("bottomright",legend=c(paste("Moran's I statistic =",round(moran.4[[3]][1],3)),paste("p-value=",moran.4[[2]])),bty="n")
+
+moran.plot.dot(cex.lab=1.2,MS_05Plus.i$PctDecid2011Cat,listw_05,labels=FALSE,xlab="Percent deciduous forest NLCD 2011",
+               ylab="Spatially lagged percent deciduous forest NLCD 2011", main=graph.title)
+moran.1=moran.test(MS_05Plus.i$PctDecid2011Cat,listw_05,randomisation=FALSE)
+legend("bottomright",legend=c(paste("Moran's I statistic =",round(moran.1[[3]][1],3)),paste("p-value=",moran.1[[2]])),bty="n")
+
+}
+sessionInfo()
+```
+###References
+Bivand, R. and N. Lewin-Koh (2015). maptools: Tools for Reading and Handling Spatial Objects. R package version 0.8-37.
+  http://CRAN.R-project.org/package=maptools
+
+Bivand, R. and Gianfranco Piras (2015). Comparing Implementations of Estimation Methods for Spatial Econometrics. Journal of
+  Statistical Software, 63(18), 1-36. URL http://www.jstatsoft.org/v63/i18/.
+
+Bivand, R. S., Hauke, J., and Kossowski, T. (2013). Computing the Jacobian in Gaussian spatial autoregressive models: An illustrated
+  comparison of available methods. Geographical Analysis, 45(2), 150-179.
+  
+ESRI 2012. ArcGIS Desktop: Release 10.1. Redlands, CA: Environmental Systems Research Institute.
+
+Hill, Ryan A., Marc H. Weber, Scott G. Leibowitz, Anthony R. Olsen, and Darren J. Thornbrugh, 2015. The Stream-Catchment (StreamCat) Dataset: A Database of Watershed Metrics for the Conterminous United States. Journal of the American Water Resources Association (JAWRA) 1-9. DOI: 10.1111/1752-1688.12372.
+
+Homer, C.G., Dewitz, J.A., Yang, L., Jin, S., Danielson, P., Xian, G., Coulston, J., Herold, N.D., Wickham, J.D., and Megown, K. 2015. Completion of the 2011 National Land Cover Database for the conterminous United States-Representing a decade of land cover change information. Photogrammetric Engineering and Remote Sensing, v. 81, no. 5, p. 345-354
+  
+R Core Team (2014). R: A language and environment for statistical computing. R Foundation for Statistical Computing, Vienna, Austria.
+  URL http://www.R-project.org/.
+  
+USDA-NRCS (United States Department of Agriculture-Natural Resources Conservation Service), United States Geological Survey (USGS), and the Environmental Protection Agency (EPA). Watershed Boundary Dataset (WBD). Available URL: "http://datagateway.nrcs.usda.gov" [Accessed 04/02/2016].
+
+USEPA (U.S. Environmental Protection Agency) and the U.S. Geological Survey (USGS). (2012). National Hydrography Dataset Plus - NHDPlus 2.10
+Available URL: "http://www.epa.gov/waters"
+  
+Wickham, H. (2015). scales: Scale Functions for Visualization. R package version 0.3.0. http://CRAN.R-project.org/package=scales

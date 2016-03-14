@@ -1,0 +1,15 @@
+Neighbour list object:
+Number of regions: 10134 
+Number of nonzero links: 59736 
+Percentage nonzero weights: 0.05816669 
+Average number of links: 5.894612 
+Link number distribution:
+
+   1    2    3    4    5    6    7    8    9   10   11   12   13   14   15 
+   5  106  747 1753 2291 1959 1372  840  514  256  129   76   37   24   16 
+  16   17   18   19   22 
+   4    1    1    2    1 
+5 least connected regions:
+3999798 3999736 11620706 11616861 11617273 with 1 link
+1 most connected region:
+4001116 with 22 links
